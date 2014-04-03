@@ -3,6 +3,7 @@ package main;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -55,22 +56,36 @@ public class TftpClient {
 	/**
 	 * Sends a file to the tftp server using mode 'octet'
 	 * @param strFilename The file that will be sent to the tftp server
+	 * @throws FileNotFoundException 
 	 * @throws IOException 
 	 */
-	public void send(String strFilename) throws IOException{
+	public void send(String strFilename) throws FileNotFoundException {
 		FileInputStream in = null;
 	
 		byte[] fileBytes = new byte[512];
 		
 		int blockNum = 0;
-		int bytesRead;
+		int bytesRead = 0;
  		
 		
 		DatagramPacket initPacket = createInitPacket(WRITEOP, strFilename);
 		DatagramPacket dataPacket;	
+		System.out.println("PRESEND");
 		
-		udpSocket.send(initPacket);
-		udpSocket.receive(initPacket);
+		try {
+			udpSocket.send(initPacket);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		System.out.println("SENT");
+		
+		try {
+			udpSocket.receive(initPacket);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		System.out.println("GOTIT");
 		File file = new File(strFilename);
 		if(checkAck(initPacket, blockNum)){
 			blockNum++;
@@ -79,13 +94,21 @@ public class TftpClient {
 			
 			// MAIN TRANSMISSION LOOP
 			do{
-				bytesRead = in.read(fileBytes);
+				try {
+					bytesRead = in.read(fileBytes);
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 				if(bytesRead<0) bytesRead = 0;
 				System.out.print(bytesRead + " ");
 				dataPacket = createDataPacket(blockNum, fileBytes, bytesRead);
 				
-				udpSocket.send(dataPacket);
-				udpSocket.receive(dataPacket);
+				try {
+					udpSocket.send(dataPacket);
+					udpSocket.receive(dataPacket);
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 				
 				if(checkAck(dataPacket, blockNum)){
 					blockNum++;
@@ -111,7 +134,6 @@ public class TftpClient {
 		DatagramPacket dataPacket = new DatagramPacket(dataPacketArray, dataPacketArray.length, serverAddr, 0);
 		
 		int blockNum = 1;
-		int bytesReceived = 0;
 		
 		DatagramPacket initPacket = createInitPacket(READOP, strFilename);
 		udpSocket.send(initPacket);
@@ -141,7 +163,7 @@ public class TftpClient {
 	/**
 	 * @param opcode		The opcode (either WRQ or RRQ) for the initialization packet
 	 * @param strFileName	The file name to send/receive from server
-	 * @return
+	 * @return				The init packet
 	 */
 	private DatagramPacket createInitPacket(byte[] opcode, String strFileName){
 		byte[] filename = strFileName.getBytes();
@@ -160,7 +182,7 @@ public class TftpClient {
 	 * @param blockNum	The current block number which will be used for the data packet
 	 * @param fileBytes	The bytes read from file, length of this array is 512 (not all bytes have to be used)
 	 * @param bytesRead	The actual number of bytes read from the file
-	 * @return
+	 * @return 			The data packet
 	 */
 	private DatagramPacket createDataPacket(int blockNum, byte[] fileBytes, int bytesRead){
 		byte[] outByteArray = new byte[bytesRead + 4];
@@ -219,10 +241,10 @@ public class TftpClient {
 	 */
 	private boolean checkDataPacket(DatagramPacket dataPacket, int blockNum){
 		byte[] opcode = new byte[2];
-		byte[] byBlockNum = new byte[2];
+		byte[] blockNumByte = new byte[2];
 		opcode = Arrays.copyOf(dataPacket.getData(), 2);
-		byBlockNum = Arrays.copyOfRange(dataPacket.getData(), 2, 4);
-		if ((opcode[1] == DATAOP[1]) && (blockNum == byteArrayToInt(byBlockNum))){
+		blockNumByte = Arrays.copyOfRange(dataPacket.getData(), 2, 4);
+		if ((opcode[1] == DATAOP[1]) && (blockNum == byteArrayToInt(blockNumByte))){
 			return true;
 		}
 		else return false;
