@@ -1,4 +1,4 @@
-package main;
+//package main;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -6,6 +6,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -15,8 +16,8 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 /**
- * @author 	Jeffrey Moon
- * @date	3/15/2014
+ * @author 	Jeffrey Moon, Theron Rabe
+ * @date	4/1/2014
  *
  *
  */
@@ -47,10 +48,22 @@ public class TftpClient {
 	 * @param mode			The transfer mode; either 'octet', 'netascii', or 'mail'
 	 */
 	public TftpClient(String strServerAddr, int myTID, String mode) throws UnknownHostException, SocketException{
-		serverAddr = InetAddress.getByName(strServerAddr);
-		this.myTID = myTID;
-		this.mode = mode.getBytes();
-		udpSocket = new DatagramSocket(myTID);
+		try {
+			serverAddr = InetAddress.getByName(strServerAddr);	//Lookup address
+		} catch (UnknownHostException e) {
+			ErrorHandler.error(8);						//error, if not found
+		}
+		this.myTID = myTID;						//Set TID
+		this.mode = mode.getBytes();					//Set mode
+		udpSocket = new DatagramSocket(myTID);				//Make socket
+		udpSocket.setSoTimeout(10000);					//Set socket timeout value
+	}
+
+	/**
+	 * Gracefully frees client resources
+	 */
+	public void close() {
+		udpSocket.close();
 	}
 	
 	/**
@@ -58,106 +71,107 @@ public class TftpClient {
 	 * @param strFilename The file that will be sent to the tftp server
 	 * @throws FileNotFoundException 
 	 * @throws IOException 
+	 * @return Number of bytes written
 	 */
-	public void send(String strFilename) throws FileNotFoundException {
-		FileInputStream in = null;
+	public long send(String strFilename) throws FileNotFoundException {
+		FileInputStream in = null;		
+		File file = new File(strFilename);		//Grab the file
+		if(!file.exists()) { ErrorHandler.error(1); }
 	
-		byte[] fileBytes = new byte[512];
+		byte[] fileBytes = new byte[512];		//allocate read buffer
 		
-		int blockNum = 0;
+		int blockNum = 0;				//initialize state
 		int bytesRead = 0;
- 		
+		long totalBytes = 0;
 		
-		DatagramPacket initPacket = createInitPacket(WRITEOP, strFilename);
-		DatagramPacket dataPacket;	
-		System.out.println("PRESEND");
+		DatagramPacket initPacket = createInitPacket(WRITEOP, strFilename);	//build WRQ
+		DatagramPacket dataPacket;
 		
-		try {
-			udpSocket.send(initPacket);
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-		System.out.println("SENT");
-		
-		try {
-			udpSocket.receive(initPacket);
+		try {//to initiate communication
+			udpSocket.send(initPacket);		//Send WRQ
+			grabPacket(udpSocket, initPacket);	//Wait for reply
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
 		
-		System.out.println("GOTIT");
-		File file = new File(strFilename);
-		if(checkAck(initPacket, blockNum)){
+		if(checkAck(initPacket, blockNum)){		//if reply is ACK...
 			blockNum++;
-			serverTID = initPacket.getPort();
-			in = new FileInputStream(file);
+			serverTID = initPacket.getPort();		//grab server TID
+			in = new FileInputStream(file);			//ready to read file
 			
 			// MAIN TRANSMISSION LOOP
-			do{
-				try {
-					bytesRead = in.read(fileBytes);
+			do {									//repeatedly...
+				try {//to keep sending
+					bytesRead = in.read(fileBytes);					//read a chunk
+					if(bytesRead<0) bytesRead = 0;
+					dataPacket = createDataPacket(blockNum, fileBytes, bytesRead);	//turn into packet
+				
+					udpSocket.send(dataPacket);					//send packet
+					do {
+						grabPacket(udpSocket, dataPacket);			//wait for proper reply
+					} while (dataPacket.getPort() != serverTID);
+				
+					if(checkAck(dataPacket, blockNum)) {				//if reply is ACK
+						blockNum++;						//change values, continue
+						totalBytes += bytesRead;			
+					} else {
+						ErrorHandler.error(extractError(dataPacket));		//else, error
+						break;
+					}
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
-				if(bytesRead<0) bytesRead = 0;
-				System.out.print(bytesRead + " ");
-				dataPacket = createDataPacket(blockNum, fileBytes, bytesRead);
-				
-				try {
-					udpSocket.send(dataPacket);
-					udpSocket.receive(dataPacket);
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-				
-				if(checkAck(dataPacket, blockNum)){
-					blockNum++;
-				}else{
-					break;
-				}
-			}while(bytesRead==512);	
-		}else{
-			//Error handle
+			} while(bytesRead==512);						//until packet is terminal
+		} else {
+			ErrorHandler.error(extractError(initPacket));
 		}
-		udpSocket.close();
+		return totalBytes;				//return total bytes transferred
 	}
+
+
 	/**
 	 * @param strFilename	File to pull from tftp server
 	 * @throws IOException	
+	 * @return Number of bytes read
 	 */
-	public void receive(String strFilename) throws IOException{
+	public long receive(String strFilename) throws IOException{
+		long totalBytes = 0;
+
+		ByteArrayOutputStream bytestream = new ByteArrayOutputStream();			//prepare to write
+		FileOutputStream fos = new FileOutputStream(new File("./" + strFilename));	//to file
 		
-		ByteArrayOutputStream bytestream = new ByteArrayOutputStream();
-		FileOutputStream fos = new FileOutputStream(new File("C:\\net\\" + strFilename));
-		
-		byte[] dataPacketArray = new byte[516];
+		byte[] dataPacketArray = new byte[516];						//initialize packet
 		DatagramPacket dataPacket = new DatagramPacket(dataPacketArray, dataPacketArray.length, serverAddr, 0);
 		
 		int blockNum = 1;
 		
-		DatagramPacket initPacket = createInitPacket(READOP, strFilename);
-		udpSocket.send(initPacket);
-		do{
-			udpSocket.receive(dataPacket);
-			if(dataPacket.getData()[1] == ERROROP[1]){
-				break;
+		DatagramPacket initPacket = createInitPacket(READOP, strFilename);		//create RRQ
+		udpSocket.send(initPacket);							//send RRQ
+
+		do{									//repeatedly...
+			grabPacket(udpSocket, dataPacket);					//wait for packet
+			if(serverTID == 0) {
+				serverTID = dataPacket.getPort();				//set serverTID, if not set
+			} else {
+				while(dataPacket.getPort() != serverTID) {
+					grabPacket(udpSocket, dataPacket);			//ensure correct server
+				}
 			}
-			if(serverTID == 0) serverTID = dataPacket.getPort();
 			
-			if(checkDataPacket(dataPacket, blockNum)){
-				udpSocket.send(createAckPacket(blockNum));
-				blockNum++;
+			if(checkDataPacket(dataPacket, blockNum)){				//if no errors
+				udpSocket.send(createAckPacket(blockNum));				//send ACK
+				blockNum++;								//advance state
 				bytestream.write(Arrays.copyOfRange(dataPacket.getData(), 4, dataPacket.getLength()));
+				totalBytes += dataPacket.getLength();					//write to memory
 			}else{
-				// Handle error
-				break;
+				ErrorHandler.error(extractError(dataPacket));			//else print error
 			}
-		}while(dataPacket.getLength() - 4 == 512);
+		} while(dataPacket.getLength() - 4 == 512);				//until packet is terminal
 		
 		byte[] outFileBytes = bytestream.toByteArray();
-		fos.write(outFileBytes);
-		fos.close();
-		udpSocket.close();
+		fos.write(outFileBytes);						//write bytes to file
+		fos.close();								//close file
+		return totalBytes;							//return file size
 	}
 	
 	/**
@@ -185,7 +199,7 @@ public class TftpClient {
 	 * @return 			The data packet
 	 */
 	private DatagramPacket createDataPacket(int blockNum, byte[] fileBytes, int bytesRead){
-		byte[] outByteArray = new byte[bytesRead + 4];
+		byte[] outByteArray = new byte[bytesRead + 4];	
 		byte[] blockNumBytes = intToByteArray(blockNum);
 		
 		System.arraycopy(DATAOP, 0, outByteArray, 0, DATAOP.length);
@@ -206,6 +220,7 @@ public class TftpClient {
 		DatagramPacket ack = new DatagramPacket(ackArray, ackArray.length, serverAddr, serverTID);
 		return ack;
 	}
+
 	/**
 	 * @param in	2D byte array that will be concatenated in big endian into a 1D byte
 	 * @param len	Length of new 1D byte aray
@@ -220,11 +235,22 @@ public class TftpClient {
 		}
 		return out;	
 	}
+
+	/**
+	 * Grabs next packet from socket, timing out if needed.
+	 */
+	private void grabPacket(DatagramSocket sock, DatagramPacket pack) {
+		try {
+			sock.receive(pack);
+		} catch (Exception e) {
+			ErrorHandler.error(9);
+		}
+	}
 	
 	/**
 	 * @param ack		ACK packet from server
 	 * @param blockNum	Block number of datagram the ACK refers to
-	 * @return 			true if ACK is correct
+	 * @return 			is this an acknowledgement?
 	 */
 	private boolean checkAck(DatagramPacket ack, int blockNum){
 		byte[] byBlockNum = new byte[2];
@@ -232,6 +258,17 @@ public class TftpClient {
 		if(ack.getData()[1] == ACKOP[1] && byteArrayToInt(byBlockNum) == blockNum) 
 			return true;
 		else return false;
+	}
+
+	/**
+	 * Extracts an error number from an error packet
+	 */
+	private int extractError(DatagramPacket p) {
+		if(p.getData()[1] == ERROROP[1]) {
+			return (int) p.getData()[3];
+		} else {
+			return 0;
+		}
 	}
 	
 	/**

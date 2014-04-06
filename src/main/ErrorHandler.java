@@ -1,61 +1,36 @@
-package main;
-
 public class ErrorHandler {
 
-	public void error(int errno){
+	public static void error(int errno){
 		switch(errno){
 		case 0:
-			System.out.println("Error: Unable to bind socket to port");
+			System.out.println("Error: Undefined error.");
 			break;
 		case 1:
-			System.out.println("Error: Unable to pack initialization packet");
+			System.out.println("Error: File not found.");
 			break;
 		case 2:
-			System.out.println("Error: Unable to transmit initialization packet");
+			System.out.println("Error: Access violation.");
 			break;
 		case 3:
-			System.out.println("Error: Unable to resolve server's hostname");
+			System.out.println("Error: Disk full or allocation exceeded.");
 			break;
 		case 4:
-			System.out.println("Error: Server timeout. Attempting to resend initialization packet");
+			System.out.println("Error: Illegal TFTP operation.");
 			break;
 		case 5:
-			System.out.println("Error: Server timeout");
+			System.out.println("Error: Unknown transfer ID.");
 			break;
 		case 6:
-			System.out.println("Error: Unable to communicate with server");
+			System.out.println("Error: File already exists.");
+			break;
+		case 7:
+			System.out.println("Error: No such user.");
 			break;
 		case 8:
-			System.out.println("Error: Unable to close bytestream");
-			break;
+			System.out.println("Error: Host not found.");
 		case 9:
-			System.out.println("Error: File not found on localhost");
-			break;
-		case 10:
-			System.out.println("Error: Unable to read from file");
-			break;
-		case 11:
-			System.out.println("Error: Unable to pack data packet");
-			break;
-		case 12:
-			System.out.println("Error: Server timeout. Attempting to resend packet");
-			break;
-		case 13:
-			System.out.println("Error: Unable to pack ACK packet");
-			break;
-		case 14:
-			System.out.println("Error: Encoding not supported");
-			break;
+			System.out.println("Error: Time out.");
 		}
-	
-		
+		System.exit(errno);
 	}
-	public void error(int errno, String errorMsg){
-		switch(errno){
-		case 7:
-			System.out.printf("Error response from server: %s", errorMsg);
-
-		}
-	}
-
 }
